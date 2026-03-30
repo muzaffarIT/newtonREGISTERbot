@@ -71,15 +71,29 @@ async def handle_match_resolution(callback: CallbackQuery):
         
         status = result.get("status")
         if status == "waitlist_full":
-            await sheets_service.log_waiting(anketa, f"Уже нет мест в {target_candidate['group']}")
+            reason = f"Нет мест в {target_candidate['group']}"
+            await sheets_service.log_waiting(anketa, reason)
             await sheets_service.resolve_pending_request(uuid_str, "в_ожидании")
-            await callback.message.reply(f"⚠️ Пока менеджер думал, места в <b>{target_candidate['group']}</b> закончились.\n📋 Ученик отправлен в лист ожидания.", parse_mode="HTML")
+            from bot.utils.messages import msg_waitlist
+            await callback.message.reply(msg_waitlist(anketa, reason), parse_mode="HTML")
         elif status == "enrolled":
             await sheets_service.resolve_pending_request(uuid_str, "выполнено")
+            from bot.utils.messages import msg_enrolled, msg_80_percent
             await callback.message.reply(
-                f"✅ <b>Успешно записан! (Решение менеджера)</b>\n\n👤 {anketa.child}\n🏫 {target_candidate['group']} ({result['match']['actual']}/{target_candidate['capacity']})",
+                msg_enrolled(anketa, target_candidate['group'], result['match']['actual'], target_candidate['capacity']),
                 parse_mode="HTML"
             )
+            # Проверка 80% заполненности (если нужно отправлять алерт и отсюда)
+            if target_candidate['capacity'] > 0 and (result['match']['actual'] / target_candidate['capacity']) * 100 >= 80:
+                await callback.bot.send_message(
+                    chat_id=callback.message.chat.id,
+                    text=msg_80_percent(
+                        target_candidate['group'], anketa.branch, result['match']['actual'], target_candidate['capacity'],
+                        result['match'].get('class', anketa.grade), result['match'].get('language', anketa.language),
+                        result['match'].get('format', anketa.fmt), result['match'].get('time', anketa.time)
+                    ),
+                    parse_mode="HTML"
+                )
         else:
             await callback.message.reply("❌ Ошибка при записи (API error).")
 

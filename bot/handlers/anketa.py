@@ -84,29 +84,31 @@ async def _search_and_process(bot, chat_id, anketa):
 
         if status == "waitlist_no_group":
             await sheets_service.log_waiting(anketa, "Нет подходящей группы")
-            await processing_msg.edit_text(
-                f"❌ <b>Подходящая группа не найдена</b>\n\n👤 {anketa.child}\n📍 {anketa.branch} | 📚 {anketa.grade} | {anketa.language}\n📋 Добавлен в <b>лист ожидания</b>",
-                parse_mode="HTML",
-            )
+            from bot.utils.messages import msg_waitlist
+            await processing_msg.edit_text(msg_waitlist(anketa, "Нет подходящей группы"), parse_mode="HTML")
         elif status == "waitlist_full":
             match = result.get("match", {})
             group_name = match.get('group', 'Неизвестно')
-            await sheets_service.log_waiting(anketa, f"Нет мест в {group_name}")
-            await processing_msg.edit_text(
-                f"⚠️ <b>Мест нет</b>\n\n👤 {anketa.child}\n🏫 {group_name}\n📋 Добавлен в <b>лист ожидания</b>",
-                parse_mode="HTML",
-            )
+            reason = f"Нет мест в {group_name}"
+            await sheets_service.log_waiting(anketa, reason)
+            from bot.utils.messages import msg_waitlist
+            await processing_msg.edit_text(msg_waitlist(anketa, reason), parse_mode="HTML")
         elif status == "enrolled":
             match = result["match"]
+            from bot.utils.messages import msg_enrolled, msg_80_percent
             await processing_msg.edit_text(
-                f"✅ <b>Успешно записан! {anketa.child}</b>\n🏫 Группа: <b>{match['group']}</b> ({match['actual']}/{match['capacity']})",
-                parse_mode="HTML",
+                msg_enrolled(anketa, match['group'], match['actual'], match['capacity']),
+                parse_mode="HTML"
             )
             # Проверка 80% заполненности
-            if (match['actual'] / match['capacity']) * 100 >= 80:
+            if match['capacity'] > 0 and (match['actual'] / match['capacity']) * 100 >= 80:
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ <b>Группа {match['group']} почти заполнена!</b>\n({match['actual']}/{match['capacity']})",
+                    text=msg_80_percent(
+                        match['group'], anketa.branch, match['actual'], match['capacity'],
+                        match.get('class', anketa.grade), match.get('language', anketa.language),
+                        match.get('format', anketa.fmt), match.get('time', anketa.time)
+                    ),
                     parse_mode="HTML"
                 )
         elif status == "enroll_error":
