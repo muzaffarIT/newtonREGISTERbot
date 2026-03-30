@@ -16,9 +16,13 @@ if not BOT_TOKEN:
 
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "1RA12Gx0d7Bq7wnzZ_WOHZj-W1RFrLymMgxv9CDWX3s0")
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "0"))
+REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID", str(GROUP_CHAT_ID)))
 
 CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
+
+DAILY_REPORT_HOUR = int(os.getenv("DAILY_REPORT_HOUR", "18"))
+DAILY_REPORT_MINUTE = int(os.getenv("DAILY_REPORT_MINUTE", "0"))
 
 # Branch Mapping: lowercase branch name from anketa -> Google Sheet tab name
 BRANCH_MAP = {
@@ -30,17 +34,21 @@ BRANCH_MAP = {
 }
 ALL_BRANCHES = list(BRANCH_MAP.values())
 
+DATA_START_ROW = 5
+
 # Column Indices in Branch Sheets (0-based)
 COL_GROUP    = 0   # A: Groups
 COL_CLASS    = 1   # B: Class
 COL_LANGUAGE = 2   # C: Language (РУС / УЗБ / МИКС)
-COL_TIME     = 3   # D: Time
-COL_FORMAT   = 4   # E: Format (ПСП / ВЧС)
+COL_FORMAT   = 3   # D: Format (ПСП / ВЧС)
+COL_TIME     = 4   # E: Time
 COL_CHILDREN = 5   # F: Children count
 COL_FREEZE   = 6   # G: Freeze count
-COL_CAPACITY = 7   # H: Capacity
-COL_ACTUAL   = 8   # I: Actual count (incremented on enroll)
+COL_NOTES    = 7   # H: Notes
+COL_CAPACITY = 8   # I: Capacity
+COL_ACTUAL   = 9   # J: Actual count (incremented on enroll)
 
 # Auxiliary Sheets
 STUDENTS_SHEET = "ЗАПИСИ"
 WAITING_SHEET  = "ОЖИДАНИЕ"
+PENDING_SHEET  = "PENDING"

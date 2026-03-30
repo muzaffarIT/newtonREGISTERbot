@@ -26,6 +26,12 @@ class Anketa:
     comment: Optional[str] = None
 
 
+def normalize_time(t: str) -> str:
+    t = re.sub(r"[–—−‒]", "-", t)   # любые тире → дефис
+    t = re.sub(r"\s*-\s*", "-", t)  # убрать пробелы вокруг дефиса
+    return t.strip()
+
+
 def _get(pattern: str, text: str, default: str = "") -> str:
     m = re.search(pattern, text, re.MULTILINE)
     return m.group(1).strip() if m else default
@@ -51,6 +57,7 @@ def parse_anketa(text: str) -> Optional[Anketa]:
     ft = re.search(r"•\s*(ПСП|ВЧС|ВНС)\s*\|\s*(\d{1,2}:\d{2}-\d{1,2}:\d{2})", text)
     fmt  = ft.group(1).replace("ВНС", "ВЧС") if ft else ""
     time = ft.group(2) if ft else ""
+    time = normalize_time(time)
 
     # Телефон
     ph = re.search(r"Контакты:\s*\n•\s*(\+?\d[\d\s\-]+)", text)
