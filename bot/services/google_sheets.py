@@ -65,6 +65,8 @@ _WAITING_HEADER  = ["Дата", "Ребёнок", "Родитель", "Теле�
 # Синхронный сервис с Tenacity (Retries)
 # ──────────────────────────────────────────────
 
+import json
+
 class SyncGoogleSheetsService:
     """Обертка gspread с повторными попытками (Tenacity)"""
 
@@ -73,7 +75,11 @@ class SyncGoogleSheetsService:
 
     def _get_client(self) -> gspread.Client:
         if not self._client:
-            creds = Credentials.from_service_account_file(settings.CREDENTIALS_FILE, scopes=SCOPES)
+            if settings.GOOGLE_CREDENTIALS_JSON:
+                creds_dict = json.loads(settings.GOOGLE_CREDENTIALS_JSON)
+                creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            else:
+                creds = Credentials.from_service_account_file(settings.CREDENTIALS_FILE, scopes=SCOPES)
             self._client = gspread.authorize(creds)
         return self._client
 

@@ -18,6 +18,7 @@ SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "1RA12Gx0d7Bq7wnzZ_WOHZj-W1RFrLymMg
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "0"))
 
 CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
 
 # Branch Mapping: lowercase branch name from anketa -> Google Sheet tab name
 BRANCH_MAP = {
