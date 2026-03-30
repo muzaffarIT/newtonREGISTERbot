@@ -30,6 +30,30 @@ def _is_header_row(row: list) -> bool:
     skip_prefixes = ("ПСП", "ВЧС", "ВНС", "СВОБОДН", "ГРУППЫ", "1 СМЕНА", "2 СМЕНА", "3 СМЕНА")
     return any(val.startswith(p) for p in skip_prefixes)
 
+def get_group_name_and_class(row: list) -> tuple[str, str]:
+    """Возвращает (название_группы, класс) с учётом особых строк."""
+    col_b = str(row[settings.COL_GROUP]).strip() if len(row) > settings.COL_GROUP else ""
+    col_c = str(row[settings.COL_CLASS]).strip() if len(row) > settings.COL_CLASS else ""
+    
+    if col_b:
+        return col_b, col_c
+    elif col_c:
+        # B пустой, название в C
+        group_name = col_c
+        # Определяем класс по названию
+        upper = col_c.upper()
+        if "ПОЧЕМУЧК" in upper:
+            grade = "Почемучка"
+        elif "ДТМ" in upper:
+            grade = "ДТМ"
+        elif "SENIOR" in upper:
+            grade = "Senior"
+        else:
+            grade = col_c
+        return group_name, grade
+    else:
+        return "", ""
+
 def _safe_int(val) -> int:
     try:
         return int(str(val).strip())
@@ -115,11 +139,10 @@ class SyncGoogleSheetsService:
             if _is_header_row(row):
                 continue
             
-            group = str(row[settings.COL_GROUP]).strip()
+            group, row_class = get_group_name_and_class(row)
             if not group:
                 continue
                 
-            row_class = str(row[settings.COL_CLASS]).strip()
             row_lang  = _normalize(row[settings.COL_LANGUAGE])
             row_fmt   = _normalize(row[settings.COL_FORMAT])
             row_time  = normalize_time(str(row[settings.COL_TIME]).strip())
@@ -224,14 +247,16 @@ class SyncGoogleSheetsService:
             if i + 1 < settings.DATA_START_ROW: continue
             if len(row) <= settings.COL_ACTUAL: continue
             if _is_header_row(row): continue
-            group = str(row[settings.COL_GROUP]).strip()
+            
+            group, row_class = get_group_name_and_class(row)
             if not group: continue
+            
             capacity = _safe_int(row[settings.COL_CAPACITY])
             actual   = _safe_int(row[settings.COL_ACTUAL])
             if capacity == 0: continue
             result.append({
                 "group":    group,
-                "class":    str(row[settings.COL_CLASS]).strip(),
+                "class":    row_class,
                 "language": str(row[settings.COL_LANGUAGE]).strip(),
                 "time":     str(row[settings.COL_TIME]).strip(),
                 "format":   str(row[settings.COL_FORMAT]).strip(),
