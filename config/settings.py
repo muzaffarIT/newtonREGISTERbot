@@ -37,14 +37,13 @@ ALL_BRANCHES = list(BRANCH_MAP.values())
 DATA_START_ROW = 5
 
 # Column Indices in Branch Sheets (0-based)
-COL_GROUP    = 0   # A: Groups
-COL_CLASS    = 1   # B: Class
-COL_LANGUAGE = 2   # C: Language (РУС / УЗБ / МИКС)
-COL_FORMAT   = 3   # D: Format (ПСП / ВЧС)
+COL_GROUP    = 1   # B: Groups
+COL_CLASS    = 2   # C: Class
+COL_LANGUAGE = 3   # D: Language (РУС / УЗБ / МИКС)
 COL_TIME     = 4   # E: Time
-COL_CHILDREN = 5   # F: Children count
-COL_FREEZE   = 6   # G: Freeze count
-COL_NOTES    = 7   # H: Notes
+COL_FORMAT   = 5   # F: Format (ПСП / ВЧС)
+COL_CHILDREN = 6   # G: Children count
+COL_FREEZE   = 7   # H: Freeze count
 COL_CAPACITY = 8   # I: Capacity
 COL_ACTUAL   = 9   # J: Actual count (incremented on enroll)
 
