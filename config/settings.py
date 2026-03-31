@@ -24,6 +24,9 @@ GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
 DAILY_REPORT_HOUR = int(os.getenv("DAILY_REPORT_HOUR", "18"))
 DAILY_REPORT_MINUTE = int(os.getenv("DAILY_REPORT_MINUTE", "0"))
 
+_allowed = os.getenv("ALLOWED_USERS", "")
+ALLOWED_USERS = [int(u.strip()) for u in _allowed.split(",")] if _allowed else []
+
 # Branch Mapping: lowercase branch name from anketa -> Google Sheet tab name
 BRANCH_MAP = {
     "ракат":    "РАКАТ",

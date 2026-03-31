@@ -10,27 +10,64 @@ from config import settings
 from bot.services.google_sheets import sheets_service
 
 router = Router()
-logger = logging.getLogger(__name__)
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from bot.services.scheduler import send_daily_report
 
-def _now_str() -> str:
-    return datetime.now(pytz.timezone("Asia/Tashkent")).strftime("%Y-%m-%d")
+def get_main_menu() -> ReplyKeyboardMarkup:
+    """Генерирует постоянное нижнее меню для менеджеров."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📊 Статус групп"), KeyboardButton(text="🟢 Свободные места")],
+            [KeyboardButton(text="🔍 Найти группу (Пошаговый фильтр)")],
+            [KeyboardButton(text="⏳ Лист ожидания")],
+            [KeyboardButton(text="📅 Отчёт за сегодня"), KeyboardButton(text="🏢 Рейтинг филиалов")],
+            [KeyboardButton(text="👨‍💼 Статистика менеджера")],
+            [KeyboardButton(text="➕ Назначить из ожидания"), KeyboardButton(text="🔄 Перевести ученика")],
+            [KeyboardButton(text="❌ Отменить запись")]
+        ],
+        resize_keyboard=True
+    )
 
 @router.message(Command("start", "help"))
 async def cmd_start(message: Message):
     text = (
         "👋 Привет! Я — Asalya, Telegram-бот для автоматизации записи в Newton Academy.\n\n"
-        "📜 <b>Основные команды:</b>\n"
-        "/groups [филиал] — посмотреть статус групп\n"
-        "/free [филиал] — группы со свободными местами\n"
-        "/group [название] — карточка конкретной группы\n"
-        "/waiting [филиал] — лист ожидания\n"
-        "/today — быстрый отчёт за сегодня\n"
-        "/fill — рейтинг филиалов по заполненности\n"
-        "/manager [имя] — действия менеджера\n"
-        "/cancel Имя Телефон — отменить запись ученика\n\n"
-        "Я автоматически читаю анкеты и проверяю Google Sheets!"
+        "Вы можете использовать команды меню или удобные кнопки внизу экрана."
     )
-    await message.reply(text, parse_mode="HTML")
+    await message.reply(text, reply_markup=get_main_menu(), parse_mode="HTML")
+
+# Роутинг текстовых кнопок на существующие команды
+@router.message(F.text == "📊 Статус групп")
+async def btn_groups(message: Message):
+    await message.reply("Укажите филиал. Например: /groups Ракат")
+
+@router.message(F.text == "🟢 Свободные места")
+async def btn_free(message: Message):
+    await message.reply("Укажите филиал. Например: /free Ракат")
+
+
+@router.message(F.text == "⏳ Лист ожидания")
+async def btn_waiting(message: Message):
+    await cmd_waiting(message)
+
+@router.message(F.text == "📅 Отчёт за сегодня")
+async def btn_today(message: Message):
+    await cmd_today(message)
+
+@router.message(F.text == "🏢 Рейтинг филиалов")
+async def btn_fill(message: Message):
+    await cmd_fill(message)
+
+@router.message(F.text == "👨‍💼 Статистика менеджера")
+async def btn_manager(message: Message):
+    await message.reply("Укажите имя менеджера. Например: /manager Шабнам")
+
+@router.message(F.text == "❌ Отменить запись")
+async def btn_cancel(message: Message):
+    await message.reply("Использование: /cancel Имя Телефон\nПример: /cancel Мадина +998991234567")
+
+
+
 
 @router.message(Command("groups"))
 async def cmd_groups(message: Message):
@@ -194,7 +231,7 @@ async def cmd_manager(message: Message):
             records.append(s)
             
     if not records:
-        await status_msg.edit_text(f"❌ Записи для менеджера <b>{target.title()}</b> не найдены.")
+        await status_msg.edit_text(f"❌ Записи для менеджера <b>{target.title()}</b> не найдены.", parse_mode="HTML")
         return
         
     active = [r for r in records if len(r) <= 11 or r[11] != "[ОТМЕНЕНО]"]

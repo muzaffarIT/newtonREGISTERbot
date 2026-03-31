@@ -126,19 +126,40 @@ async def _search_and_process(bot, chat_id, anketa):
 
             kb = InlineKeyboardBuilder()
             
-            if mtype == 3: # Diff time + has space
+            if mtype == 2: # Freeze Warning
+                msg_text = (
+                    f"⚠️ <b>Заполнено за счёт заморозок!</b>\n\n"
+                    f"Группа: {best['group']}\n"
+                    f"Занято: {best['actual']}, Заморожено: {best['freeze']}, Вместимость: {best['capacity']}\n"
+                    f"Если добавить ученика, группа переполнится когда вернутся замороженные.\n\n"
+                    f"Записать принудительно?"
+                )
+                kb.button(text="✅ Записать", callback_data=f"resc_{uuid_str}_c_{best['row_index']}")
+                kb.button(text="❌ В ожидание", callback_data=f"resc_{uuid_str}_wait")
+                kb.adjust(2)
+            elif mtype == 3: # Fuzzy Class
+                msg_text = (
+                    f"🔍 <b>Найдена альтернатива по классу</b>\n\n"
+                    f"В анкете: {anketa.grade}\n"
+                    f"В таблице найдено: {best['class']} (Группа {best['group']}).\n"
+                    f"Записать сюда?"
+                )
+                kb.button(text="✅ Да", callback_data=f"resc_{uuid_str}_c_{best['row_index']}")
+                kb.button(text="❌ В ожидание", callback_data=f"resc_{uuid_str}_wait")
+                kb.adjust(2)
+            elif mtype == 4: # Diff time + has space
                 msg_text = f"🕐 <b>Точного времени нет</b>\n\n👤 {anketa.child}\nПросит: {anketa.time}\n\nДоступные:"
                 for c in candidates[:5]:
                     if c["has_space"]:
                         kb.button(text=f"✅ {c['group']} ({c['time']})", callback_data=f"resc_{uuid_str}_c_{c['row_index']}")
                 kb.button(text="❌ В ожидание", callback_data=f"resc_{uuid_str}_wait")
                 kb.adjust(1)
-            elif mtype == 4: # format diff (ПСП ВЧС)
+            elif mtype == 5: # format diff (ПСП ВЧС)
                 msg_text = f"🔄 <b>Формат изменён</b>\n\n{anketa.fmt} занят/нет, предлагается {best['format']} в группе {best['group']}. Записать?"
                 kb.button(text="✅ Да", callback_data=f"resc_{uuid_str}_c_{best['row_index']}")
                 kb.button(text="❌ В ожидание", callback_data=f"resc_{uuid_str}_wait")
                 kb.adjust(2)
-            elif mtype == 5: # MIX lang
+            elif mtype == 6: # MIX lang
                 msg_text = f"🌐 <b>Язык МИКС</b>\n\n{anketa.language} заполнен/нет. Предлагается {best['language']} в {best['group']}. Записать?"
                 kb.button(text="✅ Да", callback_data=f"resc_{uuid_str}_c_{best['row_index']}")
                 kb.button(text="❌ В ожидание", callback_data=f"resc_{uuid_str}_wait")

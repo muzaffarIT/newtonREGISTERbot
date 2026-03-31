@@ -63,13 +63,30 @@ def _safe_int(val) -> int:
 def _normalize(s: str) -> str:
     return str(s).strip().upper()
 
-def _class_matches(row_group: str, row_class: str, grade: str) -> bool:
+import re
+
+def _evaluate_class_match(row_group: str, row_class: str, grade: str) -> int:
     g = _normalize(grade)
     rg = _normalize(row_group)
     rc = _normalize(row_class)
     if "ПОЧЕМУЧК" in g:
-        return "ПОЧЕМУЧК" in rg
-    return rc == g or g in rc
+        return 2 if "ПОЧЕМУЧК" in rg or "ПОЧЕМУЧК" in rc else 0
+    
+    if rc == g:
+        return 2 # Exact match
+        
+    g_digits = re.findall(r'\d+', g)
+    rc_digits = re.findall(r'\d+', rc)
+    if g_digits and rc_digits and g_digits[0] == rc_digits[0]:
+        return 1 # e.g. "6" vs "6 МИРЗО УЛУГБЕК"
+        
+    if "ДТМ" in g and "ДТМ" in rc:
+        return 1
+        
+    if g and (g in rc or rc in g):
+        return 1
+        
+    return 0
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -131,7 +148,6 @@ class SyncGoogleSheetsService:
 
         candidates = []
         for i, row in enumerate(rows):
-            # i = 0 based + 1 = 1 based. Data starts at row 5 (index 4)
             if i + 1 < settings.DATA_START_ROW:
                 continue
             if len(row) <= settings.COL_ACTUAL:
@@ -143,36 +159,47 @@ class SyncGoogleSheetsService:
             if not group:
                 continue
                 
+            class_match_level = _evaluate_class_match(group, row_class, anketa.grade)
+            if class_match_level == 0:
+                continue
+                
             row_lang  = _normalize(row[settings.COL_LANGUAGE])
             row_fmt   = _normalize(row[settings.COL_FORMAT])
             row_time  = normalize_time(str(row[settings.COL_TIME]).strip())
             
             capacity  = _safe_int(row[settings.COL_CAPACITY])
             actual    = _safe_int(row[settings.COL_ACTUAL])
+            freeze    = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
 
             if capacity == 0:
                 continue
-                
-            if not _class_matches(group, row_class, anketa.grade):
-                continue
 
             has_space = actual < capacity
+            available_space = capacity - actual - freeze
+            
             a_lang = _normalize(anketa.language)
             a_fmt = _normalize(anketa.fmt)
             a_time = normalize_time(anketa.time)
             
             match_type = 0
             
-            # Приоритетный поиск
             if row_lang == a_lang and row_fmt == a_fmt and row_time == a_time:
-                match_type = 1 if has_space else 2
-            elif has_space:
+                if has_space:
+                    if class_match_level == 1:
+                        match_type = 3 # Fuzzy Class
+                    elif available_space <= 0:
+                        match_type = 2 # Freeze Warning
+                    else:
+                        match_type = 1 # Perfect
+                else:
+                    match_type = 7 # Full
+            elif has_space and class_match_level == 2:
                 if row_lang == a_lang and row_fmt != a_fmt and row_time == a_time:
-                    match_type = 4
+                    match_type = 5 # Wrong format
                 elif "МИКС" in row_lang and a_lang in ["РУС", "УЗБ"]:
-                    match_type = 5
+                    match_type = 6 # Mix language
                 elif row_lang == a_lang and row_fmt == a_fmt and row_time != a_time:
-                    match_type = 3
+                    match_type = 4 # Wrong time
 
             if match_type > 0:
                 candidates.append({
@@ -184,6 +211,7 @@ class SyncGoogleSheetsService:
                     "format":    row_fmt,
                     "capacity":  capacity,
                     "actual":    actual,
+                    "freeze":    freeze,
                     "has_space": has_space,
                     "match_type": match_type,
                     "sheet_name": sheet_name
@@ -253,7 +281,9 @@ class SyncGoogleSheetsService:
             
             capacity = _safe_int(row[settings.COL_CAPACITY])
             actual   = _safe_int(row[settings.COL_ACTUAL])
+            freeze   = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
             if capacity == 0: continue
+            
             result.append({
                 "group":    group,
                 "class":    row_class,
@@ -262,7 +292,8 @@ class SyncGoogleSheetsService:
                 "format":   str(row[settings.COL_FORMAT]).strip(),
                 "capacity": capacity,
                 "actual":   actual,
-                "free":     capacity - actual,
+                "freeze":   freeze,
+                "free":     capacity - actual - freeze,
             })
         return result
 
@@ -383,7 +414,7 @@ class AsyncGoogleSheetsService:
                 current_status = await asyncio.to_thread(self._sync.get_groups_status, sheet_name)
                 # finding the actual current capacity
                 curr = next((g for g in current_status if g["group"] == bypass_match["group"]), None)
-                if not curr or curr["free"] <= 0:
+                if not curr or (curr["capacity"] - curr["actual"]) <= 0:
                     return {"status": "waitlist_full", "match": bypass_match}
                 
                 new_count = curr["actual"] + 1
@@ -414,8 +445,7 @@ class AsyncGoogleSheetsService:
                     return {"status": "enrolled", "match": best}
                 return {"status": "enroll_error"}
             else:
-                # match_type 2,3,4,5
-                if best["match_type"] == 2:
+                if best["match_type"] == 7:
                     status_str = "waitlist_full"
                 else:
                     status_str = f"ask_manager_{best['match_type']}"
