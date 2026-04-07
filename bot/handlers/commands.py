@@ -13,6 +13,32 @@ router = Router()
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from bot.services.scheduler import send_daily_report
 
+async def send_lines_chunked(message: Message, status_msg: Message, lines: list, max_len: int = 4050):
+    """
+    Умное разбиение длинного текста на чанки.
+    Так как теги находятся внутри отдельных строк в списке lines,
+    обрезка по строкам гарантирует, что HTML не сломается.
+    Первый чанк редактирует status_msg, остальные идут новыми сообщениями.
+    """
+    chunks = []
+    current_chunk = ""
+    for line in lines:
+        if len(current_chunk) + len(line) + 1 > max_len:
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = line
+        else:
+            current_chunk += ("\n" + line) if current_chunk else line
+            
+    if current_chunk:
+        chunks.append(current_chunk)
+        
+    for i, chunk in enumerate(chunks):
+        if i == 0:
+            await status_msg.edit_text(chunk, parse_mode="HTML")
+        else:
+            await message.answer(chunk, parse_mode="HTML")
+
 def get_main_menu() -> ReplyKeyboardMarkup:
     """Генерирует постоянное нижнее меню для менеджеров."""
     return ReplyKeyboardMarkup(
@@ -116,12 +142,8 @@ async def cmd_groups(message: Message):
 
     lines.append(f"📈 Итого свободных мест: {total_free}")
     
-    # Telegram limit is 4096 chars, slice if needed
-    full_text = "\n".join(lines)
-    if len(full_text) > 4050:
-        await status_msg.edit_text(full_text[:4050] + "\n... (обрезано)", parse_mode="HTML")
-    else:
-        await status_msg.edit_text(full_text, parse_mode="HTML")
+    # Умная отправка с разбиением на чанки (без разрыва HTML)
+    await send_lines_chunked(message, status_msg, lines)
 
 @router.message(Command("free"))
 async def cmd_free(message: Message):
@@ -166,7 +188,7 @@ async def cmd_free(message: Message):
         lines.append("")
 
     lines.append(f"Всего мест: {total_free}")
-    await status_msg.edit_text("\n".join(lines)[:4050], parse_mode="HTML")
+    await send_lines_chunked(message, status_msg, lines)
 
 @router.message(Command("group"))
 async def cmd_group(message: Message):
@@ -212,7 +234,7 @@ async def cmd_group(message: Message):
     for i, st in enumerate(students_in_group, 1):
         lines.append(f"{i}. {st['child']} ({st['phone']}) - {st['manager']}")
         
-    await status_msg.edit_text("\n".join(lines)[:4080], parse_mode="HTML")
+    await send_lines_chunked(message, status_msg, lines)
 
 @router.message(Command("manager"))
 async def cmd_manager(message: Message):
@@ -252,7 +274,7 @@ async def cmd_manager(message: Message):
         dt = r[0]
         lines.append(f"• {child} → {group} ({dt})")
         
-    await status_msg.edit_text("\n".join(lines), parse_mode="HTML")
+    await send_lines_chunked(message, status_msg, lines)
 
 @router.message(Command("fill"))
 async def cmd_fill(message: Message):
@@ -279,7 +301,7 @@ async def cmd_fill(message: Message):
         indicator = "🔴" if percent >= 95 else "🟡" if percent >= 80 else "🟢"
         lines.append(f"{idx}. {indicator} <b>{t}</b>: {act}/{cap} ({int(percent)}%)")
         
-    await status_msg.edit_text("\n".join(lines), parse_mode="HTML")
+    await send_lines_chunked(message, status_msg, lines)
 
 @router.message(Command("today"))
 async def cmd_today(message: Message):
@@ -317,7 +339,7 @@ async def cmd_waiting(message: Message):
         lines.append(f"   ❓ Причина: {reason}")
         lines.append(f"   🕐 Добавлен: {dt}\n")
         
-    await status_msg.edit_text("\n".join(lines)[:4050], parse_mode="HTML")
+    await send_lines_chunked(message, status_msg, lines)
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message):
