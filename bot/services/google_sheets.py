@@ -2,7 +2,6 @@ import asyncio
 import logging
 import json
 from datetime import datetime
-import pytz
 from typing import Optional, List, Dict, Any
 
 import gspread
@@ -62,26 +61,14 @@ def _safe_int(val) -> int:
         return 0
 
 def _normalize(s: str) -> str:
-    return str(s).strip().upper()
+    return str(s).strip().upper().replace("-", " ")
 
 import re
-
-def cyrillic_to_latin(text: str) -> str:
-    mapping = {
-        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'YO', 'Ж': 'ZH', 'З': 'Z',
-        'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M', 'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R',
-        'С': 'S', 'Т': 'T', 'У': 'U', 'Ф': 'F', 'Х': 'X', 'Ц': 'TS', 'Ч': 'CH', 'Ш': 'SH', 'Щ': 'SHCH',
-        'Ъ': '', 'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'YU', 'Я': 'YA',
-    }
-    for cyr, lat in mapping.items():
-        text = text.replace(cyr, lat)
-    return text
 
 def _evaluate_class_match(row_group: str, row_class: str, grade: str) -> int:
     g = _normalize(grade)
     rg = _normalize(row_group)
     rc = _normalize(row_class)
-    
     if "ПОЧЕМУЧК" in g:
         return 2 if "ПОЧЕМУЧК" in rg or "ПОЧЕМУЧК" in rc else 0
     
@@ -90,33 +77,19 @@ def _evaluate_class_match(row_group: str, row_class: str, grade: str) -> int:
         
     g_digits = re.findall(r'\d+', g)
     rc_digits = re.findall(r'\d+', rc)
-    if not (g_digits and rc_digits and g_digits[0] == rc_digits[0]):
-        return 0 # If digits don't match, we can't match them
+    if g_digits and rc_digits and g_digits[0] == rc_digits[0]:
+        return 1 # e.g. "6" vs "6 МИРЗО УЛУГБЕК"
         
-    # Check extra text (e.g. "Мирзо Улугбек" in "6 Мирзо Улугбек")
-    g_text = re.sub(r'\d+', '', g).strip().replace("-", " ")
-    if g_text:
-        # Convert to a common latin base for comparison
-        g_lat = cyrillic_to_latin(g_text)
-        rc_lat = cyrillic_to_latin(re.sub(r'\d+', '', rc).strip())
-        rg_lat = cyrillic_to_latin(re.sub(r'\d+', '', rg).strip().replace("_", " "))
+    if "ДТМ" in g and "ДТМ" in rc:
+        return 1
         
-        g_words = g_lat.split()
-        found = False
-        for gw in g_words:
-            if len(gw) > 2: # only check substantive words
-                if gw in rc_lat or gw in rg_lat:
-                    found = True
-                    break
+    if g and (g in rc or rc in g):
+        return 1
         
-        if not found:
-            return 1 # Fuzzy class (grade match, but extra name match failed - it is still a potential group, but rank it lower)
-        else:
-            return 2 # Perfect class (grade + name matched)
-            
-    return 2 # Perfect class (only grade was requested, and it matched)
+    return 0
 
 def _now() -> str:
+    import pytz
     return datetime.now(pytz.timezone("Asia/Tashkent")).strftime("%Y-%m-%d %H:%M")
 
 def _normalize_phone(ph: str) -> str:
@@ -221,7 +194,7 @@ class SyncGoogleSheetsService:
                         match_type = 1 # Perfect
                 else:
                     match_type = 7 # Full
-            elif has_space and class_match_level == 2:
+            elif has_space and class_match_level >= 1:
                 if row_lang == a_lang and row_fmt != a_fmt and row_time == a_time:
                     match_type = 5 # Wrong format
                 elif "МИКС" in row_lang and a_lang in ["РУС", "УЗБ"]:

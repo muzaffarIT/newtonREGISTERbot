@@ -17,9 +17,6 @@ async def send_daily_report(bot: Bot):
         months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
         report_date_str = f"{now_tashkent.day} {months[now_tashkent.month-1]} {now_tashkent.year}, {now_tashkent.strftime('%H:%M')}"
         iso_date = now_tashkent.strftime("%Y-%m-%d")
-        ru_date = now_tashkent.strftime("%d.%m.%Y")
-        us_date = now_tashkent.strftime("%m/%d/%Y")
-        us_date2 = f"{now_tashkent.month}/{now_tashkent.day}/{now_tashkent.year}"
         
         # Получаем статистику по всем филиалам
         branches_stats = []
@@ -50,29 +47,18 @@ async def send_daily_report(bot: Bot):
         cancelled_today = 0
         all_students = await sheets_service.get_students()
         for s in all_students:
-            if len(s) > 0:
-                s_date = str(s[0]).strip()
-                if (s_date.startswith(iso_date) or 
-                    s_date.startswith(ru_date) or 
-                    s_date.startswith(us_date) or 
-                    s_date.startswith(us_date2)):
-                    if len(s) > 11 and s[11] == "[ОТМЕНЕНО]":
-                        cancelled_today += 1
-                    else:
-                        students_today.append(s)
+            if len(s) > 0 and s[0].startswith(iso_date):
+                if len(s) > 11 and s[11] == "[ОТМЕНЕНО]":
+                    cancelled_today += 1
+                else:
+                    students_today.append(s)
                 
         # Читаем ожидающих сегодня
         waiting_today = []
         all_waiting = await sheets_service.get_waiting()
         for w in all_waiting:
-            if len(w) > 0:
-                w_date = str(w[0]).strip()
-                if (w_date.startswith(iso_date) or 
-                    w_date.startswith(ru_date) or 
-                    w_date.startswith(us_date) or 
-                    w_date.startswith(us_date2)):
-                    if len(w) <= 11 or w[11] == "ожидает":
-                        waiting_today.append(w)
+            if len(w) > 0 and w[0].startswith(iso_date) and (len(w) <= 11 or w[11] == "ожидает"):
+                 waiting_today.append(w)
                  
         lines = [
             "━━━━━━━━━━━━━━━━━━━━━",
