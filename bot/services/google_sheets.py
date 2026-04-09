@@ -2,6 +2,7 @@ import asyncio
 import logging
 import json
 from datetime import datetime
+import pytz
 from typing import Optional, List, Dict, Any
 
 import gspread
@@ -116,7 +117,7 @@ def _evaluate_class_match(row_group: str, row_class: str, grade: str) -> int:
     return 2 # Perfect class (only grade was requested, and it matched)
 
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
+    return datetime.now(pytz.timezone("Asia/Tashkent")).strftime("%Y-%m-%d %H:%M")
 
 def _normalize_phone(ph: str) -> str:
     return ph.replace(" ", "").replace("-", "").replace("+", "")
