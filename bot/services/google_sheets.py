@@ -109,9 +109,11 @@ def _evaluate_class_match(row_group: str, row_class: str, grade: str) -> int:
                     break
         
         if not found:
-            return 0
+            return 1 # Fuzzy class (grade match, but extra name match failed - it is still a potential group, but rank it lower)
+        else:
+            return 2 # Perfect class (grade + name matched)
             
-    return 1
+    return 2 # Perfect class (only grade was requested, and it matched)
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
