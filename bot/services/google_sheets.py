@@ -151,7 +151,7 @@ class SyncGoogleSheetsService:
         for i, row in enumerate(rows):
             if i + 1 < settings.DATA_START_ROW:
                 continue
-            if len(row) <= settings.COL_ACTUAL:
+            if len(row) <= settings.COL_CHILDREN:
                 continue
             if _is_header_row(row):
                 continue
@@ -169,7 +169,7 @@ class SyncGoogleSheetsService:
             row_time  = normalize_time(str(row[settings.COL_TIME]).strip())
             
             capacity  = _safe_int(row[settings.COL_CAPACITY])
-            actual    = _safe_int(row[settings.COL_ACTUAL])
+            actual    = _safe_int(row[settings.COL_CHILDREN])  # G: кол-во детей (записанных)
             freeze    = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
 
             if capacity == 0:
@@ -223,7 +223,7 @@ class SyncGoogleSheetsService:
     @retry(wait=wait_exponential(multiplier=1, max=10), stop=stop_after_attempt(3), reraise=True)
     def enroll_student_in_sheet(self, sheet_name: str, row_index: int, new_value: int) -> bool:
         ws = self._spreadsheet().worksheet(sheet_name)
-        col_num = settings.COL_ACTUAL + 1
+        col_num = settings.COL_CHILDREN + 1  # G: количество детей (не трогаем J с формулой)
         cell = gutils.rowcol_to_a1(row_index, col_num)
         ws.update(cell, [[new_value]])
         return True
@@ -274,14 +274,14 @@ class SyncGoogleSheetsService:
         result = []
         for i, row in enumerate(rows):
             if i + 1 < settings.DATA_START_ROW: continue
-            if len(row) <= settings.COL_ACTUAL: continue
+            if len(row) <= settings.COL_CHILDREN: continue
             if _is_header_row(row): continue
             
             group, row_class = get_group_name_and_class(row)
             if not group: continue
             
             capacity = _safe_int(row[settings.COL_CAPACITY])
-            actual   = _safe_int(row[settings.COL_ACTUAL])
+            actual   = _safe_int(row[settings.COL_CHILDREN])  # G: количество детей
             freeze   = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
             if capacity == 0: continue
             
@@ -360,9 +360,9 @@ class SyncGoogleSheetsService:
         # Обновляем таблицу филиала
         try:
             branch_ws = self._spreadsheet().worksheet(sheet_name)
-            cell_val = branch_ws.acell(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_ACTUAL + 1)).value
+            cell_val = branch_ws.acell(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1)).value  # G
             new_val = max(0, _safe_int(cell_val) - 1)
-            branch_ws.update(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_ACTUAL + 1), [[new_val]])
+            branch_ws.update(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1), [[new_val]])  # G
         except Exception as e:
             logger.error(f"Error subtracting capacity in sheet {sheet_name}: {e}")
             # Продожаем, чтобы хотя бы в ЗАПИСИ отметить отмену.
