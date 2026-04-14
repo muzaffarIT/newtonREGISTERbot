@@ -186,21 +186,21 @@ class SyncGoogleSheetsService:
             
             if row_lang == a_lang and row_fmt == a_fmt and row_time == a_time:
                 if has_space:
-                    if class_match_level == 1:
-                        match_type = 3 # Fuzzy Class
-                    elif available_space <= 0:
-                        match_type = 2 # Freeze Warning
-                    else:
-                        match_type = 1 # Perfect
+                    if class_match_level == 2 and available_space > 0:
+                        match_type = 1  # Perfect — exact class, has real space (not freeze)
+                    elif class_match_level == 2 and available_space <= 0:
+                        match_type = 2  # Freeze Warning — fits capacity but uses freeze buffer
+                    elif class_match_level == 1:
+                        match_type = 3  # Fuzzy Class — partial class match
                 else:
-                    match_type = 7 # Full
+                    match_type = 7  # Full — no space at all
             elif has_space and class_match_level >= 1:
                 if row_lang == a_lang and row_fmt != a_fmt and row_time == a_time:
-                    match_type = 5 # Wrong format
+                    match_type = 5  # Wrong format
                 elif "МИКС" in row_lang and a_lang in ["РУС", "УЗБ"]:
-                    match_type = 6 # Mix language
+                    match_type = 6  # Mix language
                 elif row_lang == a_lang and row_fmt == a_fmt and row_time != a_time:
-                    match_type = 4 # Wrong time
+                    match_type = 4  # Wrong time
 
             if match_type > 0:
                 candidates.append({
@@ -214,6 +214,7 @@ class SyncGoogleSheetsService:
                     "actual":    actual,
                     "freeze":    freeze,
                     "has_space": has_space,
+                    "available_space": available_space,
                     "match_type": match_type,
                     "sheet_name": sheet_name
                 })
@@ -346,28 +347,32 @@ class SyncGoogleSheetsService:
         found_idx = -1
         for i, r in enumerate(rows):
             if i == 0: continue
-            if len(r) >= 13 and _normalize(r[1]) == target_child and _normalize_phone(r[3]) == target_phone:
-                if r[12] != "[ОТМЕНЕНО]":
+            # col 11 = Лист(таблицы), col 12 = Строка(таблицы)
+            # We detect cancellation by checking col 11 for the sentinel
+            if len(r) >= 12 and _normalize(r[1]) == target_child and _normalize_phone(r[3]) == target_phone:
+                if r[11] != "[ОТМЕНЕНО]":  # col index 11 = sheet name column (we mark it)
                     found_idx = i
                     break
         
         if found_idx == -1: return False
         
         row_data = rows[found_idx]
-        sheet_name = row_data[11]
-        sheet_row_idx = _safe_int(row_data[12])
+        sheet_name = row_data[11]           # Лист(таблицы)
+        sheet_row_idx = _safe_int(row_data[12]) if len(row_data) > 12 else 0  # Строка(таблицы)
         
         # Обновляем таблицу филиала
-        try:
-            branch_ws = self._spreadsheet().worksheet(sheet_name)
-            cell_val = branch_ws.acell(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1)).value  # G
-            new_val = max(0, _safe_int(cell_val) - 1)
-            branch_ws.update(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1), [[new_val]])  # G
-        except Exception as e:
-            logger.error(f"Error subtracting capacity in sheet {sheet_name}: {e}")
-            # Продожаем, чтобы хотя бы в ЗАПИСИ отметить отмену.
+        if sheet_row_idx > 0 and sheet_name and sheet_name != "[ОТМЕНЕНО]":
+            try:
+                branch_ws = self._spreadsheet().worksheet(sheet_name)
+                cell_val = branch_ws.acell(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1)).value  # G
+                new_val = max(0, _safe_int(cell_val) - 1)
+                branch_ws.update(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1), [[new_val]])  # G
+                logger.info(f"Decremented count in {sheet_name} row {sheet_row_idx} → {new_val}")
+            except Exception as e:
+                logger.error(f"Error subtracting capacity in sheet {sheet_name}: {e}")
+                # Продолжаем, чтобы хотя бы в ЗАПИСИ отметить отмену.
             
-        # Обновляем ЗАПИСИ
+        # Обновляем ЗАПИСИ: помечаем столбцы Лист и Строка как [ОТМЕНЕНО]
         ws.update(gutils.rowcol_to_a1(found_idx + 1, 12), [["[ОТМЕНЕНО]"]])
         ws.update(gutils.rowcol_to_a1(found_idx + 1, 13), [["[ОТМЕНЕНО]"]])
         return True

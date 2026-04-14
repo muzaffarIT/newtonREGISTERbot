@@ -2,6 +2,7 @@ import logging
 import asyncio
 import uuid
 import json
+import traceback
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -49,7 +50,22 @@ async def handle_anketa(message: Message):
         return
 
     # Защита от дублей по Листу Записи
-    is_duplicate_db = await sheets_service.check_duplicate(anketa.child, anketa.phone)
+    try:
+        is_duplicate_db = await sheets_service.check_duplicate(anketa.child, anketa.phone)
+    except Exception as e:
+        logger.error(f"check_duplicate failed for {anketa.child}: {e}\n{traceback.format_exc()}")
+        await message.bot.send_message(
+            chat_id=report_chat_id,
+            text=(
+                f"⚠️ <b>Ошибка при проверке дубликата.</b>\n\n"
+                f"👤 {anketa.child}\n"
+                f"<code>{str(e)[:300]}</code>\n\n"
+                f"❗ Запись не выполнена. Проверьте доступ к Google Sheets."
+            ),
+            parse_mode="HTML",
+        )
+        return
+
     if is_duplicate_db:
         # Ask manager using inline buttons
         uuid_str = str(uuid.uuid4())
@@ -113,6 +129,11 @@ async def _search_and_process(bot, chat_id, anketa):
                 )
         elif status == "enroll_error":
             await processing_msg.edit_text("❌ Ошибка записи (API error).", parse_mode="HTML")
+        elif status == "error_branch":
+            await processing_msg.edit_text(
+                f"❌ <b>Неизвестный филиал:</b> {anketa.branch}\nПроверьте настройки BRANCH_MAP.",
+                parse_mode="HTML"
+            )
         elif status.startswith("ask_manager_"):
             mtype = int(status.split("_")[-1])
             best = result["match"]
@@ -171,10 +192,22 @@ async def _search_and_process(bot, chat_id, anketa):
                 kb.adjust(2)
             
             await processing_msg.edit_text(msg_text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        else:
+            # Неизвестный статус
+            logger.error(f"Unknown process_anketa status: {status} for {anketa.child}")
+            await processing_msg.edit_text(
+                f"❌ <b>Неизвестный статус обработки:</b> <code>{status}</code>",
+                parse_mode="HTML"
+            )
 
     except Exception as e:
-        logger.error(f"Failed to process anketa completely: {e}")
+        tb = traceback.format_exc()
+        logger.error(f"ANKETA ERROR for {anketa.child} ({anketa.branch}): {e}\n{tb}")
+        short_err = str(e)[:300]
         await processing_msg.edit_text(
-            f"❌ Системная ошибка. Попробуйте еще раз позже.",
+            f"❌ <b>Ошибка обработки анкеты.</b>\n"
+            f"👤 {anketa.child} | {anketa.branch}\n\n"
+            f"<code>{short_err}</code>\n\n"
+            f"❗ Подробности в логах сервера.",
             parse_mode="HTML"
         )

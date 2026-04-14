@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
@@ -6,6 +9,8 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.services.google_sheets import sheets_service
 from config import settings
 from bot.handlers.fsm_search import make_reply_kb
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -137,31 +142,36 @@ async def rw_group(message: Message, state: FSMContext):
          await message.reply("❌ Группа не найдена, пожалуйста выберите из меню кнопок.")
          return
          
-    # Update waitlist status
-    # ... actually we didn't implement log_waiting_resolved but we can manually mark it.
-    sheet = sheets_service._sync._spreadsheet().worksheet(settings.WAITING_SHEET)
-    actual_rows = sheet.get_all_values()
-    
-    # find row index again just to be safe
-    found_idx = -1
-    for i, row in enumerate(actual_rows):
-        if len(row) > 3 and row[1] == wait_row[1] and row[3] == wait_row[3]:
-            if len(row) > 11 and row[11] != "ЗАВЕРШЕН":
-                 found_idx = i
-                 break
-                 
-    if found_idx == -1:
-         await state.clear()
-         await message.reply("Ученик уже обработан или удален из Листа Ожидания.")
-         return
-         
-    # Mark resolved
-    from bot.services import google_sheets
-    sheet.update_cell(found_idx + 1, 12, "ЗАВЕРШЕН")
-    
-    # Process enroll
+    # Update waitlist status — mark as ЗАВЕРШЕН in the waiting sheet
+    # We use asyncio.to_thread to avoid blocking the event loop
+    def _mark_wait_done():
+        import gspread
+        from gspread import utils as gutils
+        _ws = sheets_service._sync._spreadsheet().worksheet(settings.WAITING_SHEET)
+        actual_rows = _ws.get_all_values()
+        found = -1
+        for i, row in enumerate(actual_rows):
+            if len(row) > 3 and row[1] == wait_row[1] and row[3] == wait_row[3]:
+                if len(row) > 11 and row[11] != "ЗАВЕРШЕН":
+                    found = i
+                    break
+        if found == -1:
+            return False
+        _ws.update_cell(found + 1, 12, "ЗАВЕРШЕН")
+        return True
+
+    resolved = await asyncio.to_thread(_mark_wait_done)
+    if not resolved:
+        await state.clear()
+        await message.reply("Ученик уже обработан или удален из Листа Ожидания.", reply_markup=get_main_menu())
+        return
+
+    # Process enroll — build Anketa with ALL required fields
     from bot.utils.parser import Anketa
     anketa = Anketa(
+        request_type="новый",
+        sent_at="",
+        period="",
         child=wait_row[1],
         parent=wait_row[2] if len(wait_row) > 2 else "[ОЖИДАНИЕ]",
         phone=wait_row[3],
