@@ -53,4 +53,4 @@ COL_ACTUAL   = 9   # J: Actual count (incremented on enroll)
 # Auxiliary Sheets
 STUDENTS_SHEET = "ЗАПИСИ"
 WAITING_SHEET  = "ОЖИДАНИЕ"
-PENDING_SHEET  = "PENDING"
+PENDING_SHEET  = "PENDING_DB"

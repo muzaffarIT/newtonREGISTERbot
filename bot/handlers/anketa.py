@@ -203,7 +203,7 @@ async def _search_and_process(bot, chat_id, anketa):
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"ANKETA ERROR for {anketa.child} ({anketa.branch}): {e}\n{tb}")
-        short_err = str(e)[:300]
+        short_err = f'{type(e).__name__}: {str(e)[:300]}\n{tb[:500]}'
         await processing_msg.edit_text(
             f"❌ <b>Ошибка обработки анкеты.</b>\n"
             f"👤 {anketa.child} | {anketa.branch}\n\n"
