@@ -151,8 +151,10 @@ class SyncGoogleSheetsService:
         for i, row in enumerate(rows):
             if i + 1 < settings.DATA_START_ROW:
                 continue
-            if len(row) <= settings.COL_CHILDREN:
-                continue
+            
+            # Дополняем строку пустыми значениями до нужной длины
+            row = list(row) + [""] * max(0, 15 - len(row))
+            
             if _is_header_row(row):
                 continue
             
@@ -173,7 +175,8 @@ class SyncGoogleSheetsService:
             freeze    = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
 
             if capacity == 0:
-                continue
+                # Если менеджер только создал группу и забыл указать вместимость, предполагаем 15
+                capacity = 15
 
             has_space = actual < capacity
             available_space = capacity - actual - freeze
@@ -275,16 +278,20 @@ class SyncGoogleSheetsService:
         result = []
         for i, row in enumerate(rows):
             if i + 1 < settings.DATA_START_ROW: continue
-            if len(row) <= settings.COL_CHILDREN: continue
+            
+            row = list(row) + [""] * max(0, 15 - len(row))
+            
             if _is_header_row(row): continue
             
             group, row_class = get_group_name_and_class(row)
             if not group: continue
             
             capacity = _safe_int(row[settings.COL_CAPACITY])
+            if capacity == 0: 
+                capacity = 15
+            
             actual   = _safe_int(row[settings.COL_CHILDREN])  # G: количество детей
             freeze   = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
-            if capacity == 0: continue
             
             result.append({
                 "group":    group,
