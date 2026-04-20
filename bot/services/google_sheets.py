@@ -175,8 +175,8 @@ class SyncGoogleSheetsService:
             freeze    = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
 
             if capacity == 0:
-                # Если менеджер только создал группу и забыл указать вместимость, предполагаем 15
-                capacity = 15
+                # Если менеджер только создал группу и забыл указать вместимость, предполагаем 12
+                capacity = 12
 
             has_space = actual < capacity
             available_space = capacity - actual - freeze
@@ -288,7 +288,7 @@ class SyncGoogleSheetsService:
             
             capacity = _safe_int(row[settings.COL_CAPACITY])
             if capacity == 0: 
-                capacity = 15
+                capacity = 12
             
             actual   = _safe_int(row[settings.COL_CHILDREN])  # G: количество детей
             freeze   = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
