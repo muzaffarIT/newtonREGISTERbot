@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 async def send_daily_report(bot: Bot):
     """Отправка ежедневного отчёта в 18:00 по Ташкенту."""
     try:
+        # Сначала обновляем листы статистики в Google Таблицах
+        try:
+            await sheets_service.update_branch_statistics_sheets()
+            logger.info("Branch statistics sheets updated successfully.")
+        except Exception as stat_err:
+            logger.error(f"Failed to update branch statistics sheets: {stat_err}")
+
         now_tashkent = datetime.now(pytz.timezone("Asia/Tashkent"))
         
         months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]

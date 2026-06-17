@@ -309,6 +309,16 @@ async def cmd_today(message: Message):
     from bot.services.scheduler import send_daily_report
     await send_daily_report(message.bot)
 
+@router.message(Command("update_stats"))
+async def cmd_update_stats(message: Message):
+    status_msg = await message.reply("⏳ Обновляю листы статистики по всем филиалам...")
+    try:
+        await sheets_service.update_branch_statistics_sheets()
+        await status_msg.edit_text("✅ Статистика по филиалам успешно обновлена!")
+    except Exception as e:
+        logging.error(f"Error updating stats: {e}")
+        await status_msg.edit_text(f"❌ Произошла ошибка при обновлении статистики: {e}")
+
 @router.message(Command("waiting"))
 async def cmd_waiting(message: Message):
     args = message.text.split(maxsplit=1)

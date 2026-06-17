@@ -24,11 +24,12 @@ SCOPES = [
 # ──────────────────────────────────────────────
 
 def _is_header_row(row: list) -> bool:
-    if not row or not row[0]:
+    if not row:
         return False
-    val = str(row[0]).strip().upper()
+    val0 = str(row[0]).strip().upper() if row[0] else ""
+    val1 = str(row[1]).strip().upper() if len(row) > 1 and row[1] else ""
     skip_prefixes = ("ПСП", "ВЧС", "ВНС", "СВОБОДН", "ГРУППЫ", "1 СМЕНА", "2 СМЕНА", "3 СМЕНА")
-    return any(val.startswith(p) for p in skip_prefixes)
+    return any(val0.startswith(p) or val1.startswith(p) for p in skip_prefixes)
 
 def get_group_name_and_class(row: list) -> tuple[str, str]:
     """Возвращает (название_группы, класс) с учётом особых строк."""
@@ -276,12 +277,17 @@ class SyncGoogleSheetsService:
             return []
 
         result = []
+        current_shift_name = ""
         for i, row in enumerate(rows):
             if i + 1 < settings.DATA_START_ROW: continue
             
             row = list(row) + [""] * max(0, 15 - len(row))
             
-            if _is_header_row(row): continue
+            if _is_header_row(row):
+                val = str(row[0]).strip().upper()
+                if "СМЕНА" in val:
+                    current_shift_name = val.lower()
+                continue
             
             group, row_class = get_group_name_and_class(row)
             if not group: continue
@@ -303,6 +309,7 @@ class SyncGoogleSheetsService:
                 "actual":   actual,
                 "freeze":   freeze,
                 "free":     capacity - actual - freeze,
+                "shift_name": current_shift_name,
             })
         return result
 
@@ -383,6 +390,362 @@ class SyncGoogleSheetsService:
         ws.update(gutils.rowcol_to_a1(found_idx + 1, 12), [["[ОТМЕНЕНО]"]])
         ws.update(gutils.rowcol_to_a1(found_idx + 1, 13), [["[ОТМЕНЕНО]"]])
         return True
+
+    @retry(wait=wait_exponential(multiplier=1, max=10), stop=stop_after_attempt(3), reraise=True)
+    def update_branch_statistics_sheets(self):
+        ss = self._spreadsheet()
+        existing = {ws.title for ws in ss.worksheets()}
+        
+        def is_valid_class(cls_str):
+            upper = cls_str.upper()
+            subjects = ["МАТЕМАТИКА", "ИНФОРМАТИКА", "ФИЗИКА", "ГЕОГРАФИЯ", "БИОЛОГИЯ", "ХИМИЯ", "ВСЕМИРН", "ПРАВО", "АНГЛИЙСКИЙ", "МАТ ", "MAT "]
+            for s in subjects:
+                if s in upper:
+                    return False
+            return True
+
+        def get_shift_by_time(time_str):
+            t = time_str.strip().replace(" ", "")
+            if not t:
+                return "1 смена (8:30-11:30)"
+            
+            import re
+            match = re.match(r'(\d{1,2})[:.](\d{2})', t)
+            if match:
+                hour = int(match.group(1))
+                if 7 <= hour < 12:
+                    return "1 смена (8:30-11:30)"
+                elif 12 <= hour < 16:
+                    return "2 смена (14:30-17:30)"
+                elif 16 <= hour <= 22:
+                    return "3 смена (17:30-20:30)"
+            return "1 смена (8:30-11:30)"
+
+        def map_lang(lang_str):
+            l = lang_str.strip().upper()
+            if "РУС" in l or l == "РО":
+                return "РУС"
+            if "УЗБ" in l or l == "КО" or "УЗ" in l:
+                return "УЗБ"
+            if "МИК" in l or "MIX" in l or l == "МО":
+                return "МИКС"
+            if "АНГ" in l or l == "АО":
+                return "АНГЛ"
+            return l
+
+        def sort_classes(cls):
+            import re
+            if "ПОЧЕМУЧК" in cls.upper():
+                return (-1, 0, cls)
+            nums = re.findall(r'\d+', cls)
+            if nums:
+                return (0, int(nums[0]), cls)
+            return (1, 0, cls)
+            
+        for branch_key, sheet_name in settings.BRANCH_MAP.items():
+            groups = self.get_groups_status(sheet_name)
+            if not groups:
+                continue
+                
+            stats = {}
+            formats_list = ["ПСП", "ВЧС"]
+            
+            for g in groups:
+                cls_key = g['class'].strip()
+                if not cls_key or not is_valid_class(cls_key):
+                    continue
+                    
+                format_val = g['format']
+                if format_val not in formats_list:
+                    continue
+                    
+                time_val = g['time']
+                shift_block = get_shift_by_time(time_val)
+                lang_key = map_lang(g['language'])
+                
+                if shift_block not in stats:
+                    stats[shift_block] = {}
+                if cls_key not in stats[shift_block]:
+                    stats[shift_block][cls_key] = {}
+                if lang_key not in stats[shift_block][cls_key]:
+                    stats[shift_block][cls_key][lang_key] = {}
+                if format_val not in stats[shift_block][cls_key][lang_key]:
+                    stats[shift_block][cls_key][lang_key][format_val] = {
+                        "actual": 0,
+                        "groups_count": 0,
+                        "free": 0,
+                        "capacity": 0
+                    }
+                
+                s = stats[shift_block][cls_key][lang_key][format_val]
+                s["actual"] += g["actual"]
+                s["groups_count"] += 1
+                s["free"] += g["free"]
+                s["capacity"] += g["capacity"]
+                
+            stat_sheet_title = f"статистика {branch_key.lower()}"
+            
+            if stat_sheet_title not in existing:
+                try:
+                    ws = ss.add_worksheet(stat_sheet_title, rows=1000, cols=12)
+                    logger.info(f"Created stat sheet: {stat_sheet_title}")
+                    existing.add(stat_sheet_title)
+                except Exception as e:
+                    logger.error(f"Error creating stat sheet {stat_sheet_title}: {e}")
+                    continue
+            else:
+                ws = ss.worksheet(stat_sheet_title)
+                
+            rows = []
+            title_rows = []
+            header_rows = []
+            detail_rows = []
+            total_rows = []
+            
+            sorted_shifts = sorted(stats.keys())
+            
+            for shift_block in sorted_shifts:
+                classes = stats[shift_block]
+                
+                row_idx = len(rows) + 1
+                title_rows.append(row_idx)
+                title_row = []
+                for fmt in formats_list:
+                    title_row.extend([f"{fmt} {shift_block}", "", "", "", "", ""])
+                rows.append(title_row)
+                
+                row_idx = len(rows) + 1
+                header_rows.append(row_idx)
+                header_row = []
+                for _ in formats_list:
+                    header_row.extend(["Класс", "Отделение", "Дети", "Группы", "Места", "Средн"])
+                rows.append(header_row)
+                
+                start_detail_row = len(rows) + 1
+                sorted_classes = sorted(classes.keys(), key=sort_classes)
+                
+                stripe_idx = 0
+                for cls_key in sorted_classes:
+                    sorted_langs = sorted(classes[cls_key].keys())
+                    for lang_key in sorted_langs:
+                        row_idx = len(rows) + 1
+                        is_even = (stripe_idx % 2 == 0)
+                        detail_rows.append((row_idx, is_even))
+                        stripe_idx += 1
+                        
+                        row = []
+                        d_psp = classes[cls_key][lang_key].get("ПСП")
+                        if d_psp and d_psp["groups_count"] > 0:
+                            row.extend([cls_key, lang_key, d_psp["actual"], d_psp["groups_count"], d_psp["free"], f'=IFERROR(C{row_idx}/D{row_idx}; "нет группы")'])
+                        else:
+                            row.extend([cls_key, lang_key, 0, 0, 0, "нет группы"])
+                            
+                        d_vcs = classes[cls_key][lang_key].get("ВЧС")
+                        if d_vcs and d_vcs["groups_count"] > 0:
+                            row.extend([cls_key, lang_key, d_vcs["actual"], d_vcs["groups_count"], d_vcs["free"], f'=IFERROR(I{row_idx}/J{row_idx}; "нет группы")'])
+                        else:
+                            row.extend([cls_key, lang_key, 0, 0, 0, "нет группы"])
+                            
+                        rows.append(row)
+                
+                end_detail_row = len(rows)
+                
+                row_idx = len(rows) + 1
+                total_rows.append(row_idx)
+                total_row = []
+                
+                total_row.extend([
+                    "Всего ПСП", 
+                    "", 
+                    f"=SUM(C{start_detail_row}:C{end_detail_row})", 
+                    f"=SUM(D{start_detail_row}:D{end_detail_row})", 
+                    f"=SUM(E{start_detail_row}:E{end_detail_row})", 
+                    f"=IFERROR(C{row_idx}/D{row_idx}; 0)"
+                ])
+                total_row.extend([
+                    "Всего ВЧС", 
+                    "", 
+                    f"=SUM(I{start_detail_row}:I{end_detail_row})", 
+                    f"=SUM(J{start_detail_row}:J{end_detail_row})", 
+                    f"=SUM(K{start_detail_row}:K{end_detail_row})", 
+                    f"=IFERROR(I{row_idx}/J{row_idx}; 0)"
+                ])
+                rows.append(total_row)
+                
+                rows.append([""] * 12)
+            
+            ws.clear()
+            if rows:
+                ws.update(range_name="A1", values=rows, value_input_option="USER_ENTERED")
+                
+                sheet_id = int(ws.id)
+                requests = []
+                
+                for r in title_rows:
+                    requests.append({
+                        "mergeCells": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": r - 1,
+                                "endRowIndex": r,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 6
+                            },
+                            "mergeType": "MERGE_ALL"
+                        }
+                    })
+                    requests.append({
+                        "mergeCells": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": r - 1,
+                                "endRowIndex": r,
+                                "startColumnIndex": 6,
+                                "endColumnIndex": 12
+                            },
+                            "mergeType": "MERGE_ALL"
+                        }
+                    })
+                    requests.append({
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": r - 1,
+                                "endRowIndex": r,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 12
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {"red": 0.18, "green": 0.24, "blue": 0.35},
+                                    "textFormat": {
+                                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                                        "fontSize": 11,
+                                        "bold": True
+                                    },
+                                    "horizontalAlignment": "CENTER",
+                                    "verticalAlignment": "MIDDLE"
+                                }
+                            },
+                            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+                        }
+                    })
+                    
+                for r in header_rows:
+                    requests.append({
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": r - 1,
+                                "endRowIndex": r,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 12
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {"red": 0.92, "green": 0.94, "blue": 0.96},
+                                    "textFormat": {
+                                        "foregroundColor": {"red": 0.2, "green": 0.2, "blue": 0.2},
+                                        "fontSize": 10,
+                                        "bold": True
+                                    },
+                                    "horizontalAlignment": "CENTER",
+                                    "verticalAlignment": "MIDDLE"
+                                }
+                            },
+                            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+                        }
+                    })
+                    
+                for r, is_even in detail_rows:
+                    bg = {"red": 1.0, "green": 1.0, "blue": 1.0} if is_even else {"red": 0.97, "green": 0.98, "blue": 0.99}
+                    requests.append({
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": r - 1,
+                                "endRowIndex": r,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 12
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": bg,
+                                    "textFormat": {
+                                        "fontSize": 10
+                                    },
+                                    "horizontalAlignment": "CENTER",
+                                    "verticalAlignment": "MIDDLE"
+                                }
+                            },
+                            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+                        }
+                    })
+                    
+                for r in total_rows:
+                    requests.append({
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": r - 1,
+                                "endRowIndex": r,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 12
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {"red": 0.88, "green": 0.9, "blue": 0.92},
+                                    "textFormat": {
+                                        "foregroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0},
+                                        "fontSize": 10,
+                                        "bold": True
+                                    },
+                                    "horizontalAlignment": "CENTER",
+                                    "verticalAlignment": "MIDDLE"
+                                }
+                            },
+                            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+                        }
+                    })
+                    
+                requests.append({
+                    "updateBorders": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": 0,
+                            "endRowIndex": len(rows),
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 12
+                        },
+                        "top": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
+                        "bottom": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
+                        "left": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
+                        "right": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
+                        "innerHorizontal": {"style": "SOLID", "width": 1, "color": {"red": 0.85, "green": 0.85, "blue": 0.85}},
+                        "innerVertical": {"style": "SOLID", "width": 1, "color": {"red": 0.85, "green": 0.85, "blue": 0.85}}
+                    }
+                })
+                
+                requests.append({
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": 0,
+                            "endIndex": 12
+                        },
+                        "properties": {
+                            "pixelSize": 90
+                        },
+                        "fields": "pixelSize"
+                    }
+                })
+                
+                try:
+                    ss.batch_update({"requests": requests})
+                    logger.info(f"Applied formatting to {stat_sheet_title}")
+                except Exception as e:
+                    logger.error(f"Error applying formatting to {stat_sheet_title}: {e}")
 
 
 # ──────────────────────────────────────────────
@@ -479,5 +842,8 @@ class AsyncGoogleSheetsService:
     async def get_waiting_raw(self, branch: str = None) -> List[List]:
         # returns the unmodified list to get actual indexes maybe
         return await asyncio.to_thread(self._sync.get_waiting, branch) # currently the same
+
+    async def update_branch_statistics_sheets(self):
+        await asyncio.to_thread(self._sync.update_branch_statistics_sheets)
 
 sheets_service = AsyncGoogleSheetsService()
