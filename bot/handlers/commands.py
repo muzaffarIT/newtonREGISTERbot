@@ -370,3 +370,27 @@ async def cmd_cancel(message: Message):
         reply_markup=kb.as_markup(),
         parse_mode="HTML"
     )
+
+@router.message(Command("debug"))
+async def cmd_debug(message: Message):
+    try:
+        ss = sheets_service._sync._spreadsheet()
+        title = ss.title
+        worksheets = [ws.title for ws in ss.worksheets()]
+        
+        status_text = (
+            f"🤖 <b>DEBUG INFO</b>\n\n"
+            f"📊 <b>Таблица:</b> {title}\n"
+            f"🆔 <b>Spreadsheet ID:</b> <code>{settings.SPREADSHEET_ID}</code>\n"
+            f"🔑 <b>Авторизация:</b> {'ENV (GOOGLE_CREDENTIALS_JSON)' if settings.GOOGLE_CREDENTIALS_JSON else 'Файл (credentials.json)'}\n\n"
+            f"🗺 <b>Карта филиалов:</b>\n"
+        )
+        for k, v in settings.BRANCH_MAP.items():
+            status_text += f"  • {k} -> {v}\n"
+            
+        status_text += f"\n📂 <b>Доступные листы в Google Sheets ({len(worksheets)}):</b>\n"
+        status_text += ", ".join(worksheets)
+        
+        await message.reply(status_text, parse_mode="HTML")
+    except Exception as e:
+        await message.reply(f"❌ <b>Ошибка при дебаге:</b>\n<code>{e}</code>", parse_mode="HTML")
