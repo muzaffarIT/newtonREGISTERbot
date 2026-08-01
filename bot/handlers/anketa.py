@@ -15,10 +15,10 @@ from bot.services.google_sheets import sheets_service
 router = Router()
 logger = logging.getLogger(__name__)
 
-@router.message(F.text.contains("Анкета Newton Academy"))
+@router.message(F.text.contains("Анкета Newton Academy") | F.caption.contains("Анкета Newton Academy"))
 async def handle_anketa(message: Message):
-    """Срабатывает когда в группу приходит анкета."""
-    anketa = parse_anketa(message.text or "")
+    """Срабатывает когда в группу приходит анкета (текстом или файлом с подписью)."""
+    anketa = parse_anketa(message.text or message.caption or "")
     if not anketa:
         return
 
