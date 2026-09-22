@@ -143,10 +143,15 @@ class SyncGoogleSheetsService:
     def find_matching_candidates(self, sheet_name: str, anketa: Anketa) -> List[Dict[str, Any]]:
         try:
             ws = self._spreadsheet().worksheet(sheet_name)
-            rows = ws.get_all_values()
         except gspread.exceptions.WorksheetNotFound:
+            # НЕ возвращаем [] — иначе анкета молча уедет в ОЖИДАНИЕ с причиной
+            # "Нет подходящей группы", и поломка маппинга филиала останется незамеченной.
             logger.error(f"Sheet not found: {sheet_name}")
-            return []
+            raise RuntimeError(
+                f"Лист филиала '{sheet_name}' не найден в таблице. "
+                f"Проверьте BRANCH_MAP в config/settings.py."
+            )
+        rows = ws.get_all_values()
 
         candidates = []
         for i, row in enumerate(rows):

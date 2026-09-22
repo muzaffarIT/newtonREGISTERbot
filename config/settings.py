@@ -31,7 +31,7 @@ ALLOWED_USERS = [int(u.strip()) for u in _allowed.split(",")] if _allowed else [
 BRANCH_MAP = {
     "ракат":    "РАКАТ",
     "паркент":  "ПАРКЕНТ",
-    "ганга":    "ГАНГА2",
+    "ганга":    "ГАНГА",
     "сергели":  "СЕРГЕЛИ",
     "чиланзар": "ЧИЛАНЗАР",
 }
@@ -39,16 +39,22 @@ ALL_BRANCHES = list(BRANCH_MAP.values())
 
 DATA_START_ROW = 5
 
-# Column Indices in Branch Sheets (0-based)
+# Column Indices in Branch Sheets (0-based).
+# Раскладка листа филиала (шапка: "ГРУППЫ | Класс | Уровень | Отделение |
+# Время обучения | День обучения | Кол-во детей | Кол-во заморозок |
+# ВМЕСТИМОСТЬ кабинета | Кол-во факт"):
+#   A(0) №  B(1) ГРУППЫ  C(2) Класс  D(3) Уровень  E(4) Отделение
+#   F(5) Время обучения  G(6) День обучения  H(7) Кол-во детей
+#   I(8) Кол-во заморозок  J(9) ВМЕСТИМОСТЬ  K(10) Кол-во факт
 COL_GROUP    = 1   # B: Groups
 COL_CLASS    = 2   # C: Class
-COL_LANGUAGE = 3   # D: Language (РУС / УЗБ / МИКС)
-COL_TIME     = 4   # E: Time
-COL_FORMAT   = 5   # F: Format (ПСП / ВЧС)
-COL_CHILDREN = 6   # G: Children count
-COL_FREEZE   = 7   # H: Freeze count
-COL_CAPACITY = 8   # I: Capacity
-COL_ACTUAL   = 9   # J: Actual count (incremented on enroll)
+COL_LEVEL    = 3   # D: Уровень (B / C) — не используется при подборе
+COL_LANGUAGE = 4   # E: Отделение (РУС / УЗБ / МИКС)
+COL_TIME     = 5   # F: Время обучения
+COL_FORMAT   = 6   # G: День обучения (ПСП / ВЧС)
+COL_CHILDREN = 7   # H: Кол-во детей (записанных) — обновляется при зачислении/отмене
+COL_FREEZE   = 8   # I: Кол-во заморозок
+COL_CAPACITY = 9   # J: ВМЕСТИМОСТЬ кабинета
 
 # Auxiliary Sheets
 STUDENTS_SHEET = "ЗАПИСИ"
