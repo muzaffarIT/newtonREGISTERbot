@@ -89,6 +89,27 @@ def _evaluate_class_match(row_group: str, row_class: str, grade: str) -> int:
         
     return 0
 
+_FMT_PSP_DAYS = ("ПОНЕДЕЛЬНИК", "СРЕДА", "ПЯТНИЦА")
+_FMT_VCS_DAYS = ("ВТОРНИК", "ЧЕТВЕРГ", "СУББОТА")
+
+def _normalize_fmt(value: str) -> str:
+    """Приводит колонку "День обучения" к ПСП / ВЧС.
+
+    Менеджеры пишут туда и коды (ПСП/ВЧС, опечатка ВНС), и расписание словами
+    ("вторник/четверг/суббота"). Нераспознанное значение возвращается как есть:
+    оно просто не совпадёт ни с одной анкетой, а вызывающий код это логирует.
+    """
+    v = _normalize(value)
+    if v == "ВНС":
+        return "ВЧС"
+    if v in ("ПСП", "ВЧС"):
+        return v
+    if sum(d in v for d in _FMT_VCS_DAYS) >= 2:
+        return "ВЧС"
+    if sum(d in v for d in _FMT_PSP_DAYS) >= 2:
+        return "ПСП"
+    return v
+
 def _now() -> str:
     import pytz
     return datetime.now(pytz.timezone("Asia/Tashkent")).strftime("%Y-%m-%d %H:%M")
@@ -96,9 +117,35 @@ def _now() -> str:
 def _normalize_phone(ph: str) -> str:
     return ph.replace(" ", "").replace("-", "").replace("+", "")
 
-_STUDENTS_HEADER = ["Дата", "Ребёнок", "Родитель", "Телефон", "Филиал", "Класс", "Язык", "Формат", "Время", "Группа", "Менеджер", "Лист(таблицы)", "Строка(таблицы)"]
+_STUDENTS_HEADER = ["Дата", "Ребёнок", "Родитель", "Телефон", "Филиал", "Класс", "Язык", "Формат", "Время", "Группа", "Менеджер", "Лист(таблицы)", "Строка(таблицы)", "Статус"]
 _WAITING_HEADER  = ["Дата", "Ребёнок", "Родитель", "Телефон", "Филиал", "Класс", "Язык", "Формат", "Время", "Причина", "Менеджер", "Статус"]
 _PENDING_HEADER  = ["UUID", "Дата", "Тип", "Данные (JSON)", "Статус"]
+
+# Индекс колонки "Статус" в листе ЗАПИСИ (N, 0-based = 13)
+STUDENTS_COL_STATUS = 13
+
+def is_student_cancelled(row: list) -> bool:
+    """Отменена ли запись студента (новая схема со статусом + legacy-данные).
+
+    Новая схема: маркер '[ОТМЕНЕНО ...]' лежит в колонке Статус (13).
+    Legacy:      маркер '[ОТМЕНЕНО]' затирал колонку Лист(таблицы) (11).
+
+    Обе колонки проверяются независимо от длины строки: gspread дополняет все
+    строки до ширины самого широкого ряда, поэтому как только появится хоть одна
+    запись со статусом, у legacy-строк колонка Статус тоже будет существовать
+    (пустая) — отличить их по длине строки уже нельзя.
+    """
+    if len(row) > STUDENTS_COL_STATUS and str(row[STUDENTS_COL_STATUS]).strip().startswith("[ОТМЕНЕНО"):
+        return True
+    return len(row) > 11 and str(row[11]).strip().startswith("[ОТМЕНЕНО")
+
+def student_cancel_date(row: list) -> Optional[str]:
+    """Дата отмены 'YYYY-MM-DD' если запись отменена с указанной датой, иначе None."""
+    if len(row) > STUDENTS_COL_STATUS:
+        m = re.match(r"\[ОТМЕНЕНО\s+(\d{4}-\d{2}-\d{2})", str(row[STUDENTS_COL_STATUS]).strip())
+        if m:
+            return m.group(1)
+    return None
 
 # ──────────────────────────────────────────────
 # Синхронный сервис с Tenacity (Retries)
@@ -107,6 +154,9 @@ _PENDING_HEADER  = ["UUID", "Дата", "Тип", "Данные (JSON)", "Ста
 class SyncGoogleSheetsService:
     def __init__(self):
         self._client: Optional[gspread.Client] = None
+        # Об одной и той же кривой строке в таблице предупреждаем один раз за
+        # запуск, иначе лог засоряется на каждой анкете.
+        self._warned_fmt: set = set()
 
     def _get_client(self) -> gspread.Client:
         if not self._client:
@@ -139,6 +189,40 @@ class SyncGoogleSheetsService:
             ws.append_row(_PENDING_HEADER)
             logger.info(f"Created sheet: {settings.PENDING_SHEET}")
 
+        # Дозаполняем шапку у листов, созданных до появления новых колонок
+        # (например "Статус" в ЗАПИСИ). Существующие заголовки не трогаем.
+        self._extend_header(settings.STUDENTS_SHEET, _STUDENTS_HEADER)
+        self._extend_header(settings.WAITING_SHEET, _WAITING_HEADER)
+
+    def _extend_header(self, sheet_name: str, expected: List[str]):
+        """Добавляет недостающие подписи в конец шапки листа.
+
+        Только дописывает: если существующая ячейка непустая и отличается от
+        ожидаемой, лист считается изменённым вручную и не трогается вовсе.
+        """
+        try:
+            ws = self._spreadsheet().worksheet(sheet_name)
+            current = ws.row_values(1)
+        except Exception as e:
+            logger.error(f"Cannot read header of {sheet_name}: {e}")
+            return
+
+        if len(current) >= len(expected):
+            return
+        for i, name in enumerate(current):
+            if str(name).strip() and str(name).strip() != expected[i]:
+                logger.warning(
+                    f"Header of {sheet_name} differs from expected at column {i + 1} "
+                    f"({name!r} != {expected[i]!r}); leaving it alone."
+                )
+                return
+
+        missing = expected[len(current):]
+        first = gutils.rowcol_to_a1(1, len(current) + 1)
+        last = gutils.rowcol_to_a1(1, len(expected))
+        ws.update(f"{first}:{last}", [missing])
+        logger.info(f"Extended header of {sheet_name} with: {missing}")
+
     @retry(wait=wait_exponential(multiplier=1, max=10), stop=stop_after_attempt(3), reraise=True)
     def find_matching_candidates(self, sheet_name: str, anketa: Anketa) -> List[Dict[str, Any]]:
         try:
@@ -154,6 +238,7 @@ class SyncGoogleSheetsService:
         rows = ws.get_all_values()
 
         candidates = []
+        unknown_fmt = set()
         for i, row in enumerate(rows):
             if i + 1 < settings.DATA_START_ROW:
                 continue
@@ -173,11 +258,14 @@ class SyncGoogleSheetsService:
                 continue
                 
             row_lang  = _normalize(row[settings.COL_LANGUAGE])
-            row_fmt   = _normalize(row[settings.COL_FORMAT])
+            row_fmt   = _normalize_fmt(row[settings.COL_FORMAT])
             row_time  = normalize_time(str(row[settings.COL_TIME]).strip())
+
+            if row_fmt and row_fmt not in ("ПСП", "ВЧС"):
+                unknown_fmt.add((i + 1, group, row_fmt))
             
             capacity  = _safe_int(row[settings.COL_CAPACITY])
-            actual    = _safe_int(row[settings.COL_CHILDREN])  # G: кол-во детей (записанных)
+            actual    = _safe_int(row[settings.COL_CHILDREN])  # "Кол-во детей" (записанных)
             freeze    = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
 
             if capacity == 0:
@@ -228,12 +316,23 @@ class SyncGoogleSheetsService:
                     "sheet_name": sheet_name
                 })
 
+        # Такие группы не совпадут ни с одной анкетой — это ошибка в таблице,
+        # и она должна быть видна, а не теряться молча.
+        warned = getattr(self, "_warned_fmt", None)
+        if warned is None:
+            warned = self._warned_fmt = set()
+        fresh = {(sheet_name, *u) for u in unknown_fmt} - warned
+        if fresh:
+            warned |= fresh
+            details = ", ".join(f"стр.{r} {g!r}={f!r}" for _, r, g, f in sorted(fresh))
+            logger.warning(f"{sheet_name}: нераспознанный «День обучения» — {details}")
+
         return sorted(candidates, key=lambda c: c["match_type"])
 
     @retry(wait=wait_exponential(multiplier=1, max=10), stop=stop_after_attempt(3), reraise=True)
     def enroll_student_in_sheet(self, sheet_name: str, row_index: int, new_value: int) -> bool:
         ws = self._spreadsheet().worksheet(sheet_name)
-        col_num = settings.COL_CHILDREN + 1  # G: количество детей (не трогаем J с формулой)
+        col_num = settings.COL_CHILDREN + 1  # "Кол-во детей" (колонку "Кол-во факт" не трогаем)
         cell = gutils.rowcol_to_a1(row_index, col_num)
         ws.update(cell, [[new_value]])
         return True
@@ -245,7 +344,7 @@ class SyncGoogleSheetsService:
             _now(), anketa.child, anketa.parent, anketa.phone,
             anketa.branch, anketa.grade, anketa.language,
             anketa.fmt, anketa.time, group, anketa.manager,
-            sheet_name, row_index
+            sheet_name, row_index, "активен"
         ])
 
     @retry(wait=wait_exponential(multiplier=1, max=10), stop=stop_after_attempt(3), reraise=True)
@@ -266,9 +365,7 @@ class SyncGoogleSheetsService:
         target_phone = _normalize_phone(phone)
         for r in rows:
             if len(r) >= 4 and _normalize(r[1]) == target_child and _normalize_phone(r[3]) == target_phone:
-                if len(r) > 11 and r[11] != "[ОТМЕНЕНО]": # ensure it's not cancelled
-                    return True
-                elif len(r) <= 11:
+                if not is_student_cancelled(r):  # активная запись = дубль
                     return True
         return False
 
@@ -301,7 +398,7 @@ class SyncGoogleSheetsService:
             if capacity == 0: 
                 capacity = 12
             
-            actual   = _safe_int(row[settings.COL_CHILDREN])  # G: количество детей
+            actual   = _safe_int(row[settings.COL_CHILDREN])  # "Кол-во детей"
             freeze   = _safe_int(row[settings.COL_FREEZE]) if len(row) > settings.COL_FREEZE else 0
             
             result.append({
@@ -309,7 +406,7 @@ class SyncGoogleSheetsService:
                 "class":    row_class,
                 "language": str(row[settings.COL_LANGUAGE]).strip(),
                 "time":     str(row[settings.COL_TIME]).strip(),
-                "format":   str(row[settings.COL_FORMAT]).strip(),
+                "format":   _normalize_fmt(row[settings.COL_FORMAT]),
                 "capacity": capacity,
                 "actual":   actual,
                 "freeze":   freeze,
@@ -366,34 +463,35 @@ class SyncGoogleSheetsService:
         found_idx = -1
         for i, r in enumerate(rows):
             if i == 0: continue
-            # col 11 = Лист(таблицы), col 12 = Строка(таблицы)
-            # We detect cancellation by checking col 11 for the sentinel
-            if len(r) >= 12 and _normalize(r[1]) == target_child and _normalize_phone(r[3]) == target_phone:
-                if r[11] != "[ОТМЕНЕНО]":  # col index 11 = sheet name column (we mark it)
+            if len(r) >= 4 and _normalize(r[1]) == target_child and _normalize_phone(r[3]) == target_phone:
+                if not is_student_cancelled(r):  # отменяем только активную запись
                     found_idx = i
                     break
-        
+
         if found_idx == -1: return False
-        
+
         row_data = rows[found_idx]
-        sheet_name = row_data[11]           # Лист(таблицы)
+        sheet_name = row_data[11] if len(row_data) > 11 else ""           # Лист(таблицы)
         sheet_row_idx = _safe_int(row_data[12]) if len(row_data) > 12 else 0  # Строка(таблицы)
-        
-        # Обновляем таблицу филиала
-        if sheet_row_idx > 0 and sheet_name and sheet_name != "[ОТМЕНЕНО]":
+
+        # Обновляем таблицу филиала: -1 ребёнок в колонке "Кол-во детей"
+        if sheet_row_idx > 0 and sheet_name and not str(sheet_name).startswith("[ОТМЕНЕНО]"):
             try:
                 branch_ws = self._spreadsheet().worksheet(sheet_name)
-                cell_val = branch_ws.acell(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1)).value  # G
+                cell_val = branch_ws.acell(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1)).value  # "Кол-во детей"
                 new_val = max(0, _safe_int(cell_val) - 1)
-                branch_ws.update(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1), [[new_val]])  # G
+                branch_ws.update(gutils.rowcol_to_a1(sheet_row_idx, settings.COL_CHILDREN + 1), [[new_val]])  # "Кол-во детей"
                 logger.info(f"Decremented count in {sheet_name} row {sheet_row_idx} → {new_val}")
             except Exception as e:
                 logger.error(f"Error subtracting capacity in sheet {sheet_name}: {e}")
                 # Продолжаем, чтобы хотя бы в ЗАПИСИ отметить отмену.
-            
-        # Обновляем ЗАПИСИ: помечаем столбцы Лист и Строка как [ОТМЕНЕНО]
-        ws.update(gutils.rowcol_to_a1(found_idx + 1, 12), [["[ОТМЕНЕНО]"]])
-        ws.update(gutils.rowcol_to_a1(found_idx + 1, 13), [["[ОТМЕНЕНО]"]])
+
+        # Обновляем ЗАПИСИ: ставим датированный маркер в колонку Статус (N).
+        # Колонки Лист(таблицы)/Строка(таблицы) НЕ затираем — сохраняем ссылку для возможного восстановления.
+        ws.update(
+            gutils.rowcol_to_a1(found_idx + 1, STUDENTS_COL_STATUS + 1),
+            [[f"[ОТМЕНЕНО {_now()}]"]]
+        )
         return True
 
     @retry(wait=wait_exponential(multiplier=1, max=10), stop=stop_after_attempt(3), reraise=True)

@@ -99,23 +99,40 @@ async def handle_match_resolution(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("cncl_"))
 async def handle_cancel_confirmation(callback: CallbackQuery):
-    """Confirms student cancellation"""
-    data_parts = callback.data.split("_")
+    """Confirms student cancellation (UUID-based, payload stored in PENDING_DB)."""
+    data_parts = callback.data.split("_", 2)
+    if len(data_parts) < 3:
+        return
     action = data_parts[1]
-    child_name = data_parts[2]
-    phone = data_parts[3]
-    
+    uuid_str = data_parts[2]
+
+    # Снимаем «часики» с кнопки сразу: дальше идут обращения к Google Sheets,
+    # которые занимают несколько секунд.
+    await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
-    
+
     if action == "no":
         await callback.message.reply("🔙 Отмена прервана.")
         return
-        
+
     if action == "yes":
+        pending = await sheets_service.get_pending_request(uuid_str)
+        if not pending:
+            await callback.message.reply("❌ Заявка устарела или уже обработана.")
+            return
+        child_name = pending["data"].get("child", "")
+        phone = pending["data"].get("phone", "")
+
         await callback.message.reply(f"⏳ Отменяю запись {child_name}...")
         ok = await sheets_service.cancel_student(child_name, phone)
+        await sheets_service.resolve_pending_request(uuid_str, "выполнено" if ok else "не_найдено")
         if ok:
-            await callback.message.reply(f"✅ Ученик <b>{child_name}</b> ({phone}) успешно отменён.\nМесто освобождено.", parse_mode="HTML")
-            # Trigger waiting list check here or let it be handled...
+            await callback.message.reply(
+                f"✅ Ученик <b>{child_name}</b> ({phone}) успешно отменён.\nМесто освобождено.",
+                parse_mode="HTML"
+            )
         else:
-            await callback.message.reply(f"❌ Не удалось отменить {child_name} ({phone}). Возможно он уже отменен или данные устарели.", parse_mode="HTML")
+            await callback.message.reply(
+                f"❌ Не удалось отменить {child_name} ({phone}). Возможно он уже отменен или данные устарели.",
+                parse_mode="HTML"
+            )

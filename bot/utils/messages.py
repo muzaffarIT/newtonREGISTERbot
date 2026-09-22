@@ -5,6 +5,15 @@ from bot.utils.parser import Anketa
 def _now_str() -> str:
     return datetime.now(pytz.timezone("Asia/Tashkent")).strftime("%d.%m.%Y в %H:%M")
 
+def _plural_places(n: int) -> str:
+    """Склонение: место / места / мест."""
+    n = abs(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return "место"
+    if 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
+        return "места"
+    return "мест"
+
 def msg_enrolled(anketa: Anketa, group_name: str, actual: int, capacity: int) -> str:
     free = capacity - actual
     dt = _now_str()
@@ -17,7 +26,7 @@ def msg_enrolled(anketa: Anketa, group_name: str, actual: int, capacity: int) ->
         f"🏫 Группа: {group_name}\n"
         f"📚 Класс: {anketa.grade}  |  🗣 Язык: {anketa.language}\n"
         f"⏰ Формат: {anketa.fmt}  |  Время: {anketa.time}\n"
-        f"📊 Мест занято: {actual} из {capacity} (осталось {free})\n"
+        f"📊 Мест занято: {actual} из {capacity} (осталось {free} {_plural_places(free)})\n"
         f"👨‍💼 Менеджер: {anketa.manager}\n"
         f"🕐 Дата: {dt}"
     )
@@ -43,5 +52,5 @@ def msg_80_percent(group_name: str, branch: str, actual: int, capacity: int, gra
         f"🏫 {group_name} ({branch})\n"
         f"📊 Занято: {actual} из {capacity} мест ({percent}%)\n"
         f"📚 {grade} | {lang} | {fmt} {time}\n"
-        f"🔴 Осталось всего {free} места!"
+        f"🔴 Осталось всего {free} {_plural_places(free)}!"
     )

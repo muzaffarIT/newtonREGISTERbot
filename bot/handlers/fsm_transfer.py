@@ -3,7 +3,7 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from bot.services.google_sheets import sheets_service
+from bot.services.google_sheets import sheets_service, is_student_cancelled
 from config import settings
 from bot.handlers.fsm_search import make_reply_kb
 
@@ -45,7 +45,7 @@ async def ts_search(message: Message, state: FSMContext):
     # format of row: ["Дата", "Ребёнок", "Родитель", "Телефон", "Филиал", "Класс", "Язык", "Формат", "Время", "Группа", "Менеджер", "Лист", "Строка"]
     # We want active ones
     for i, r in enumerate(students):
-        if len(r) > 11 and r[11] == "[ОТМЕНЕНО]":
+        if is_student_cancelled(r):
             continue
         if len(r) > 3:
             child = r[1].lower()
@@ -169,6 +169,9 @@ async def ts_group(message: Message, state: FSMContext):
     from bot.utils.parser import Anketa
     # Create fake anketa
     anketa = Anketa(
+        request_type="новый",
+        sent_at="",
+        period="",
         child=data["child"],
         parent="[Перевод]",
         phone=data["phone"],

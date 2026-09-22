@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import settings
-from bot.services.google_sheets import sheets_service
+from bot.services.google_sheets import sheets_service, is_student_cancelled
 
 router = Router()
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -207,14 +207,14 @@ async def cmd_group(message: Message):
     
     for s in all_students:
         if len(s) > 9 and s[9].strip().lower() == target:
-            if len(s) <= 11 or s[11] != "[ОТМЕНЕНО]":
+            if not is_student_cancelled(s):
                 students_in_group.append({
                     "date": s[0],
                     "child": s[1],
                     "phone": s[3] if len(s) > 3 else "",
                     "manager": s[10] if len(s) > 10 else "?"
                 })
-            # Попытаться извлечь инфу 
+            # Попытаться извлечь инфу
             if not group_info:
                 group_info = {"branch": s[4], "grade": s[5], "lang": s[6], "fmt": s[7], "time": s[8]}
                 
@@ -256,7 +256,7 @@ async def cmd_manager(message: Message):
         await status_msg.edit_text(f"❌ Записи для менеджера <b>{target.title()}</b> не найдены.", parse_mode="HTML")
         return
         
-    active = [r for r in records if len(r) <= 11 or r[11] != "[ОТМЕНЕНО]"]
+    active = [r for r in records if not is_student_cancelled(r)]
     cancelled = len(records) - len(active)
     
     lines = [
@@ -305,9 +305,14 @@ async def cmd_fill(message: Message):
 
 @router.message(Command("today"))
 async def cmd_today(message: Message):
-    await message.reply("⏳ Генерирую отчёт за сегодня...")
-    from bot.services.scheduler import send_daily_report
-    await send_daily_report(message.bot)
+    status_msg = await message.reply("⏳ Генерирую отчёт за сегодня...")
+    try:
+        from bot.services.scheduler import build_daily_report_text
+        text = await build_daily_report_text()
+        await send_lines_chunked(message, status_msg, text.split("\n"))
+    except Exception as e:
+        logging.error(f"Error generating today report: {e}")
+        await status_msg.edit_text(f"❌ Ошибка при формировании отчёта: {e}")
 
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
@@ -360,10 +365,16 @@ async def cmd_cancel(message: Message):
         
     child_name = args[1].strip()
     phone = args[2].strip()
-    
+
+    # Используем UUID в callback_data, чтобы не упираться в лимит Telegram 64 байта
+    # (кириллические имена + телефон могут его превышать).
+    import uuid
+    uuid_str = str(uuid.uuid4())
+    await sheets_service.save_pending_request(uuid_str, "cancel", {"child": child_name, "phone": phone})
+
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Да, отменить", callback_data=f"cncl_yes_{child_name}_{phone}")
-    kb.button(text="❌ Нет", callback_data=f"cncl_no_{child_name}_{phone}")
+    kb.button(text="✅ Да, отменить", callback_data=f"cncl_yes_{uuid_str}")
+    kb.button(text="❌ Нет", callback_data=f"cncl_no_{uuid_str}")
     
     await message.reply(
         f"❓ Вы действительно хотите отменить запись ученика:\n👤 <b>{child_name}</b> ({phone})?\n\n(Это освободит место в группе и изменит статус в листе ЗАПИСИ)",

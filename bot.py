@@ -31,6 +31,8 @@ class AccessMiddleware(BaseMiddleware):
         user_id = None
         if event.message:
             user_id = event.message.from_user.id
+        elif event.edited_message:
+            user_id = event.edited_message.from_user.id
         elif event.callback_query:
             user_id = event.callback_query.from_user.id
             
